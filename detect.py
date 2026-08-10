@@ -3,24 +3,25 @@ import sys
 import cv2
 from ultralytics import YOLO
 
-# 1. Locate Trained Weights Automatically
-WEIGHTS_PATH = 'runs/detect/train/weights/best.pt'
+# 1. Locate Trained Weights Automatically (Supports default and custom run names)
+WEIGHTS_PATH = 'runs/detect/carton_cement_wood_run/fast_30min_model/weights/best.pt'
 
 if not os.path.exists(WEIGHTS_PATH):
   detect_dir = 'runs/detect'
   if os.path.exists(detect_dir):
-    train_runs = sorted([
-        d
-        for d in os.listdir(detect_dir)
-        if d.startswith('train')
-        and os.path.exists(os.path.join(detect_dir, d, 'weights', 'best.pt'))
-    ])
-    if train_runs:
-      WEIGHTS_PATH = os.path.join(detect_dir, train_runs[-1], 'weights/best.pt')
+    # Traverses all runs inside runs/detect to find the most recently created best.pt
+    found_weights = []
+    for root, _, files in os.walk(detect_dir):
+      if 'best.pt' in files:
+        full_path = os.path.join(root, 'best.pt')
+        found_weights.append(full_path)
+
+    if found_weights:
+      WEIGHTS_PATH = max(found_weights, key=os.path.getctime)
 
 if not os.path.exists(WEIGHTS_PATH):
   print(f"[ERROR] Trained weights not found at '{WEIGHTS_PATH}'.")
-  print('Please complete training before running inference.')
+  print("Please ensure your 'best.pt' file is placed inside the 'runs/detect/' directory.")
   sys.exit(1)
 
 print(f'[INFO] Loading model weights from: {WEIGHTS_PATH}')
@@ -31,11 +32,13 @@ CLASS_NAMES = {0: 'Carton', 1: 'Cement Bag', 2: 'Wood'}
 
 # Bounding Box Color Palette (BGR)
 CLASS_COLORS = {
-    0: (0, 255, 0),  # Green for Carton
+    0: (0, 255, 0),    # Green for Carton
     1: (255, 165, 0),  # Orange for Cement Bag
     2: (0, 165, 255),  # Cyan/Amber for Wood
 }
 
+# Optimal Confidence Threshold derived from F1-Confidence Curve
+OPTIMAL_CONF = 0.436
 
 def run_detection():
   """Performs real-time OpenCV object detection via camera feed."""
@@ -61,8 +64,8 @@ def run_detection():
       print('[WARN] Failed to grab frame.')
       break
 
-    # Run YOLO Inference (using Metal acceleration if supported)
-    results = model(frame, stream=True, conf=0.5)
+    # Run YOLO Inference with optimal F1 confidence threshold
+    results = model(frame, stream=True, conf=OPTIMAL_CONF)
 
     for r in results:
       boxes = r.boxes
@@ -80,13 +83,13 @@ def run_detection():
 
         # Draw Label Background
         (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-        cv2.rectangle(frame, (x1, y1 - 20), (x1 + w, y1), color, -1)
+        cv2.rectangle(frame, (x1, max(y1 - 20, 0)), (x1 + w, max(y1, 20)), color, -1)
 
         # Draw Text
         cv2.putText(
             frame,
             label,
-            (x1, y1 - 5),
+            (x1, max(y1 - 5, 15)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
             (0, 0, 0),

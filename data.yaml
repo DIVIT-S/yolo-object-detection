@@ -1,0 +1,8 @@
+path: /Users/divitsingh/YOLO
+train: images/train
+val: images/val
+
+names:
+  0: Carton
+  1: Cement Bag
+  2: Wood

@@ -4,3 +4,16 @@ __pycache__/
 .DS_Store
 runs/
 dataset/
+# Ignore raw datasets and zip archives
+*.zip
+combined_dataset/
+temp/
+runs/
+*.crdownload
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore OS files
+.DS_Store
