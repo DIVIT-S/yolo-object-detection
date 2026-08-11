@@ -6,12 +6,20 @@ import cv2
 from ultralytics import YOLO
 
 # 1. Locate Trained Weights Automatically (Supports default and custom run names)
-WEIGHTS_PATH = 'runs/detect/carton_cement_wood_run/fast_30min_model/weights/best.pt'
+WEIGHTS_PATH = 'weights/best.pt'
+
+if not os.path.exists(WEIGHTS_PATH):
+    for alternate in [
+        'results/YOLOv8 Industrial Training Results/weights/best.pt',
+        'runs/detect/train-3/weights/best.pt',
+    ]:
+        if os.path.exists(alternate):
+            WEIGHTS_PATH = alternate
+            break
 
 if not os.path.exists(WEIGHTS_PATH):
     detect_dir = 'runs/detect'
     if os.path.exists(detect_dir):
-        # Traverses all runs inside runs/detect to find the most recently created best.pt
         found_weights = []
         for root, _, files in os.walk(detect_dir):
             if 'best.pt' in files:
@@ -20,7 +28,7 @@ if not os.path.exists(WEIGHTS_PATH):
         if found_weights:
             WEIGHTS_PATH = max(found_weights, key=os.path.getctime)
 
-# Fall back to the weights checked into the repo root
+# Fall back to the repo root best.pt if present
 if not os.path.exists(WEIGHTS_PATH) and os.path.exists('best.pt'):
     WEIGHTS_PATH = 'best.pt'
 
@@ -42,44 +50,24 @@ CLASS_COLORS = {
     2: (0, 165, 255),  # Cyan/Amber for Wood
 }
 
-# Optimal Confidence Threshold derived from the F1-Confidence Curve for this model
-OPTIMAL_CONF = 0.468
-
-# Per-class confidence overrides. Carton is the smallest training class (1,356
-# instances vs. 10,206 for Wood) and is the main source of false positives on
-# background regions, so it needs a stricter bar than the F1-optimal average.
-# Tune these while watching the live feed if Carton is still over-firing.
-CLASS_CONF_OVERRIDES = {
-    0: 0.65,          # Carton — noisier class, needs a higher bar
-    1: OPTIMAL_CONF,  # Cement Bag
-    2: OPTIMAL_CONF,  # Wood
-}
-
-# Passed to the model itself: the loosest threshold across all classes, so no
-# class gets filtered out before draw_detections can apply its own per-class
-# threshold. draw_detections() below does the real filtering.
-MODEL_CONF = min(CLASS_CONF_OVERRIDES.values())
+# Use a reasonable default confidence threshold so the model does not draw
+# many low-confidence boxes that appear incorrect in practice.
+DEFAULT_CONF = 0.10
 
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp'}
 VIDEO_EXTS = {'.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv'}
 
 
-def draw_detections(frame, results):
-    """Draws bounding boxes, class labels, and confidence scores onto a frame.
-
-    Applies CLASS_CONF_OVERRIDES so each class can have its own confidence
-    threshold instead of one global cutoff.
-    """
+def draw_detections(frame, results, threshold):
+    """Draws bounding boxes, class labels, and confidence scores onto a frame."""
     for r in results:
         boxes = r.boxes
         for box in boxes:
             conf = float(box.conf[0])
-            cls_id = int(box.cls[0])
-
-            threshold = CLASS_CONF_OVERRIDES.get(cls_id, OPTIMAL_CONF)
             if conf < threshold:
-                continue  # below this class's own bar — skip it
+                continue
 
+            cls_id = int(box.cls[0])
             x1, y1, x2, y2 = map(int, box.xyxy[0])
             color = CLASS_COLORS.get(cls_id, (255, 255, 255))
             class_name = CLASS_NAMES.get(cls_id, 'Unknown')
@@ -95,15 +83,16 @@ def draw_detections(frame, results):
     return frame
 
 
-def run_on_image(source, save, out_dir):
+def run_on_image(source, save, out_dir, conf):
     """Runs detection on a single image and displays/saves the annotated result."""
     frame = cv2.imread(source)
     if frame is None:
         print(f'[ERROR] Could not read image: {source}')
         sys.exit(1)
 
-    results = model(frame, conf=MODEL_CONF)
-    frame = draw_detections(frame, results)
+    print(f'[INFO] Inference confidence threshold: {conf}')
+    results = model(frame, conf=conf)
+    frame = draw_detections(frame, results, conf)
 
     if save:
         os.makedirs(out_dir, exist_ok=True)
@@ -117,7 +106,7 @@ def run_on_image(source, save, out_dir):
     cv2.destroyAllWindows()
 
 
-def run_on_video(source, save, out_dir, is_webcam=False):
+def run_on_video(source, save, out_dir, conf, is_webcam=False):
     """Runs detection on a video file or webcam stream."""
     if is_webcam:
         cap = cv2.VideoCapture(0, cv2.CAP_AVFOUNDATION)
@@ -155,8 +144,8 @@ def run_on_video(source, save, out_dir, is_webcam=False):
                 print('[WARN] Failed to grab frame.')
             break
 
-        results = model(frame, stream=True, conf=MODEL_CONF)
-        frame = draw_detections(frame, results)
+        results = model(frame, stream=True, conf=conf)
+        frame = draw_detections(frame, results, conf)
 
         if writer is not None:
             writer.write(frame)
@@ -187,10 +176,14 @@ def main():
         '--out-dir', default='outputs',
         help='Directory to save annotated output when --save is set (default: outputs/).',
     )
+    parser.add_argument(
+        '--conf', type=float, default=DEFAULT_CONF,
+        help=f'Minimum confidence threshold for inference/drawing detections (default: {DEFAULT_CONF}).',
+    )
     args = parser.parse_args()
 
     if args.source is None:
-        run_on_video(None, args.save, args.out_dir, is_webcam=True)
+        run_on_video(None, args.save, args.out_dir, args.conf, is_webcam=True)
         return
 
     if not os.path.exists(args.source):
@@ -199,9 +192,9 @@ def main():
 
     ext = os.path.splitext(args.source)[1].lower()
     if ext in IMAGE_EXTS:
-        run_on_image(args.source, args.save, args.out_dir)
+        run_on_image(args.source, args.save, args.out_dir, args.conf)
     elif ext in VIDEO_EXTS:
-        run_on_video(args.source, args.save, args.out_dir, is_webcam=False)
+        run_on_video(args.source, args.save, args.out_dir, args.conf, is_webcam=False)
     else:
         print(f'[ERROR] Unsupported file type: {ext}')
         sys.exit(1)
