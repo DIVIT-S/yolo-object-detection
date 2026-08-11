@@ -173,8 +173,8 @@ def main():
         help='Save the annotated output (image/video) to --out-dir instead of just displaying it.',
     )
     parser.add_argument(
-        '--out-dir', default='outputs',
-        help='Directory to save annotated output when --save is set (default: outputs/).',
+        '--out-dir', default='detection_results',
+        help='Directory to save annotated output when --save is set (default: detection_results/).',
     )
     parser.add_argument(
         '--conf', type=float, default=DEFAULT_CONF,
